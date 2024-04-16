@@ -1,0 +1,393 @@
+import fs/filesystem;
+import ds/set;
+import ds/tree;
+import string;
+import lingo/pegcode/driver;
+
+NemoProg(
+	decls : [NemoDecl],
+	body : NemoStat,
+);
+
+NemoDecl(
+	var : string,
+	type : NemoType,
+);
+
+NemoType ::= NemoIntType, NemoArrType;
+	NemoIntType();
+	NemoArrType(type : NemoType);
+
+NemoExp ::= NemoBinOp, NemoUnOp, NemoUpd, NemoApp, NemoVar, NemoInt;
+	NemoBinOp(op: string, lhs : NemoExp, rhs : NemoExp);
+	NemoUnOp(op: string, e : NemoExp);
+	NemoUpd(arr : NemoExp, ind : NemoExp, val : NemoExp);
+	NemoApp(arr : NemoExp, ind : NemoExp);
+	NemoVar(name : string);
+	NemoInt(val : int);
+
+NemoStat ::= NemoAssign, NemoTest, NemoSeq, NemoChoice, NemoLoop;
+	NemoAssign(var : string, val : NemoExp);
+	NemoTest(cond : string, lhs : NemoExp, rhs : NemoExp);
+	NemoSeq(stats : [NemoStat]);
+	NemoChoice(stats : [NemoStat]);
+	NemoLoop(body : NemoStat);
+
+
+VNemoProg(
+	decls : [NemoDecl],
+	body : [VNemoStat],
+);
+
+VNemoStat ::= VNemoAssign, VNemoIf;
+
+VNemoAssign(
+	var : string,
+	val : NemoExp, goto : [int]
+);
+
+VNemoIf(cond : string, 
+	lhs : NemoExp, rhs : NemoExp, 
+	pos : [int], neg : [int]
+);
+
+VNemoSeqAcc(
+	stats : [[VNemoStat]],
+	max_lab : int
+);
+
+VNemoChoiceAcc(
+	stats : [[VNemoStat]],
+	starts : [int],
+	ends : [int],
+	max_lab : int
+);
+
+NemoVal ::= NemoValInt, NemoValArr;
+
+NemoValInt(val : int);
+
+NemoValArr(arr : [NemoVal]);
+
+
+nemoType2s(t : NemoType) -> string {
+    	switch (t) {
+		NemoIntType(): "INT";
+		NemoArrType(a): "[" + nemoType2s(a) + "]";
+	}
+}
+
+nemoDecl2s(d : NemoDecl) -> string {
+	"VAR " + d.var + " : " + nemoType2s(d.type) + ";"
+}
+
+nemoExp2s(e : NemoExp) -> string {
+	switch (e) {
+		NemoBinOp(op, l, r): "(" + nemoExp2s(l) + " " + op + " " + nemoExp2s(r) + ")";
+		NemoUnOp(op, e1): op + " " + nemoExp2s(e1);
+		NemoUpd(a, i, v): "UPD(" + nemoExp2s(a) + ", " + nemoExp2s(i) + ", " + nemoExp2s(v) + ")";
+		NemoApp(a, i): "APP(" + nemoExp2s(a) + ", " + nemoExp2s(i) + ")";
+		NemoVar(name): name;
+		NemoInt(val): i2s(val);
+	}
+}
+
+nemoStat2s(stat : NemoStat) -> string {
+	indentStr = \str -> strGlue(map(strSplit(str, "\n"), \s -> "\t" + s), "\n");
+	switch (stat) {
+		NemoAssign(var, val): var + " := " + nemoExp2s(val);
+		NemoTest(c, l, r): "(" + nemoExp2s(l) + " " + c + " " + nemoExp2s(r) + ")";
+		NemoSeq(ss): "{\n" + strGlue(map(ss, \s -> indentStr(nemoStat2s(s))), ";\n") + "\n}";
+		NemoChoice(ss): "{\n" + strGlue(map(ss, \s -> indentStr(nemoStat2s(s))), "U\n") + "\n}";
+		NemoLoop(body): "*" + nemoStat2s(body);
+	}
+}
+
+nemoProg2s(p : NemoProg) -> string {
+	strGlue(map(p.decls, nemoDecl2s), "\n") + "\n" +
+	nemoStat2s(p.body)
+}
+
+s2nemo(str : string) -> NemoProg {
+	e_gr = "#include lingo/arith.lingo";
+	parsic(
+		compilePegGrammar(e_gr),
+	    str, 
+		SemanticActions(
+			mergeTree(defaultPegActions.t,
+			pairs2tree([
+				Pair("createSeq", \s -> NemoSeq(concat3([s[0]], [s[1]], s[2]))),
+				Pair("createChoice", \s -> NemoChoice(concat3([s[0]], [s[1]], s[2]))),
+			]))
+		)
+	)
+}
+
+checkNemoProgram(prog : NemoProg, onError : (string) -> void) -> void {
+	checkNemoStat(prog.body, checkTypedecls(prog, onError), onError)
+}
+
+checkTypedecls(prog : NemoProg, onError : (string) -> void) -> Tree<string, NemoType> {
+	fold(prog.decls, makeTree(), \acc, decl -> {
+		if (containsKeyTree(acc, decl.var)) {
+			onError("duplicate variable declararion: " + decl.var);
+		}
+		setTree(acc, decl.var, decl.type)
+	})
+}
+
+checkNemoStat(stat : NemoStat, typedecls : Tree<string, NemoType>, onError : (string) -> void) -> void {
+	switch (stat) {
+		NemoAssign(var, val):
+			switch (lookupTree(typedecls, var)) {
+				Some(var_type): {
+					maybeApply(checkNemoType(val, typedecls, onError), \val_type ->
+						if (val_type != var_type) { 
+							onError("variable declared " + var + " type " + nemoType2s(var_type) + 
+									" differs from the assigned expression type: " + nemoType2s(val_type)
+							);
+						}
+					)
+				}
+				None(): onError("variable " + var + " is not declared");
+			}
+		NemoTest(op, l, r):
+			maybeApply(checkNemoType(l, typedecls, onError), \l_type ->
+				maybeApply(checkNemoType(r, typedecls, onError), \r_type -> {
+					if (l_type != NemoIntType()) {
+						onError("in comparison " + op + " left side must be of integer type, but is: " + nemoType2s(l_type));
+					}
+					if (r_type != NemoIntType()) {
+						onError("in comparison " + op + " right side must be of integer type, but is: " + nemoType2s(r_type));
+					}
+				})
+			);
+		NemoSeq(stats):
+			iter(stats, \s -> checkNemoStat(s, typedecls, onError));
+		NemoChoice(stats):
+			iter(stats, \s -> checkNemoStat(s, typedecls, onError));
+		NemoLoop(body):
+			checkNemoStat(body, typedecls, onError)
+	}
+}
+
+checkNemoType(expr : NemoExp, typedecls : Tree<string, NemoType>, onError : (string) -> void) -> Maybe<NemoType> {
+	switch (expr) {
+		NemoBinOp(op, l, r):
+			maybeBind2(
+				\l_type, r_type -> {
+					if (l_type != NemoIntType()) {
+						onError("in binary operation " + op + " left side must be of integer type, but is: " + nemoType2s(l_type));
+						None();
+					} else {
+						if (r_type != NemoIntType()) {
+							onError("in binary operation " + op + " right side must be of integer type, but is: " + nemoType2s(r_type));
+							None();
+						} else {
+							Some(NemoIntType());
+						}
+					}
+				}
+			)
+			(checkNemoType(l, typedecls, onError), checkNemoType(r, typedecls, onError));
+		NemoUnOp(op, e):
+			maybeBind(checkNemoType(e, typedecls, onError), 
+				\e_type -> {
+					if (e_type != NemoIntType()) {
+						onError("in unary operation " + op + " operand must be of integer type, but is: " + nemoType2s(e_type));
+						None()
+					} else {
+						Some(NemoIntType());
+					}
+				}
+			);
+		NemoUpd(arr, ind, upd):
+			maybeBind(checkNemoType(upd, typedecls, onError), \upd_type ->
+				maybeBind2(
+					\arr_type, ind_type -> {
+						switch (arr_type) {
+							NemoArrType(val_type): {
+								if (ind_type != NemoIntType()) {
+									onError("in array update operation index side must be of integer type, but is: " + nemoType2s(ind_type));
+									None();
+								} else {
+									if (upd_type == val_type) {
+										Some(NemoArrType(val_type));
+									} else {
+										onError("in array update operation update type must coincide with the array value type, but is: " + nemoType2s(upd_type));
+										None();
+									}
+								}
+							}
+							default: {
+								onError("in array update operation array side must be of array type, but is: " + nemoType2s(arr_type));
+								None();
+							}
+						}
+					}
+				)
+				(checkNemoType(arr, typedecls, onError), checkNemoType(ind, typedecls, onError))
+			);
+		NemoApp(arr, ind):
+			maybeBind2(
+				\arr_type, ind_type -> {
+					switch (arr_type) {
+						NemoArrType(val_type): {
+							if (ind_type != NemoIntType()) {
+								onError("in array index operation index side must be of integer type, but is: " + nemoType2s(ind_type));
+								None();
+							} else {
+								Some(val_type);
+							}
+						}
+						default: {
+							onError("in array index operation array side must be of array type, but is: " + nemoType2s(arr_type));
+							None();
+						}
+					}
+				}
+			)
+			(checkNemoType(arr, typedecls, onError), checkNemoType(ind, typedecls, onError));
+		NemoVar(name): {
+			ret = lookupTree(typedecls, name);
+			if (ret == None()) {
+				onError("variable is not declared: " + name);
+			}
+			ret
+		}
+		NemoInt(__): Some(NemoIntType());
+	}
+}
+
+
+nemo2vnemo(prog : NemoProg) -> Maybe<VNemoProg> {
+	err_count = ref 0;
+	onError = \err -> {
+		println("error: " + err);
+		err_count := ^err_count + 1;
+	}
+	checkNemoProgram(prog, onError);
+	if (^err_count == 0) {
+		Some(VNemoProg(prog.decls, nemoStat2vnemoStat(prog.body)))
+	} else {
+		None()
+	}
+}
+
+maxVmLabel(ss : [VNemoStat]) -> int {
+	max_lab = \labs -> fold(labs, -1, max);
+	max_stat = \s -> {
+		switch (s) {
+			VNemoAssign(__,__, goto):    max_lab(goto);
+			VNemoIf(__,__,__, pos, neg): max(max_lab(pos), max_lab(neg));
+		}
+	}
+	fold(ss, -1, \acc, s -> max(acc, max_stat(s)))
+}
+
+addVmLabel(ss : [VNemoStat], n : int) -> [VNemoStat] {
+	add_lab = \labs -> fold(labs, [], \acc, l -> concat(acc, [l + n]));
+	add_stat = \s -> {
+		switch (s) {
+			VNemoAssign(var, val, goto): VNemoAssign(var, val, add_lab(goto));
+			VNemoIf(c, l, r, pos, neg):  VNemoIf(c, l, r, add_lab(pos), add_lab(neg));
+		}
+	}
+	fold(ss, [], \acc, s -> concat(acc, [add_stat(s)]))
+}
+
+replaceVmLabel(ss : [VNemoStat], n : int, m : int) -> [VNemoStat] {
+	replace_lab = \labs -> fold(labs, [], \acc, l -> concat(acc, if (l == n) [m] else [l]));
+	replace_stat = \s -> {
+		switch (s) {
+			VNemoAssign(var, val, goto): VNemoAssign(var, val, replace_lab(goto));
+			VNemoIf(c, l, r, pos, neg):  VNemoIf(c, l, r, replace_lab(pos), replace_lab(neg));
+		}
+	}
+	fold(ss, [], \acc, s -> concat(acc, [replace_stat(s)]))
+}
+
+
+nemoStat2vnemoStat(stat : NemoStat) -> [VNemoStat] {
+	switch(stat) {
+		NemoAssign(var, val): [VNemoAssign(var, val, [1])];
+		NemoTest(c, l, r): [VNemoIf(c, l, r, [1], [])];
+		NemoSeq(ss): 
+			concatA(fold(ss, VNemoSeqAcc([], 0), \acc, s -> {
+					vs = nemoStat2vnemoStat(s);
+					size = maxVmLabel(vs);
+					VNemoSeqAcc(concat(acc.stats, [addVmLabel(vs, acc.max_lab)]), acc.max_lab + size);
+				}
+			).stats);
+		NemoChoice(ss): {
+			choices = fold(ss, VNemoChoiceAcc([], [], [], 1), \acc, s -> {
+					vs = nemoStat2vnemoStat(s);
+					size = maxVmLabel(vs);
+					VNemoChoiceAcc(
+						concat(acc.stats, [addVmLabel(vs, acc.max_lab)]),
+						concat(acc.starts, [acc.max_lab]),
+						concat(acc.ends, [acc.max_lab + size]),
+						acc.max_lab + size
+					);
+				}
+			);
+			concat(
+				[VNemoIf("==", NemoInt(0), NemoInt(0), choices.starts, [])],
+				foldi(choices.stats, [], \i, acc, s ->
+					concat(acc, replaceVmLabel(s, choices.ends[i], choices.max_lab))
+				)
+			);
+		}
+		NemoLoop(b): {
+			vs = addVmLabel(nemoStat2vnemoStat(b), 1);
+			size = maxVmLabel(vs);
+			concat(
+				[VNemoIf("==", NemoInt(0), NemoInt(0), [1, size], [])],
+				replaceVmLabel(vs, size, 0)
+			)
+		}
+	}
+}
+
+
+vnemoStat2s(s : VNemoStat) -> string {
+	switch (s) {
+		VNemoAssign(var, val, goto): var + " := " + nemoExp2s(val) + " goto {" + strGlue(map(goto, i2s), " ") + "}";
+		VNemoIf(c, l, r, pos, neg): 
+			"if (" + nemoExp2s(l) + " " + c + " " + nemoExp2s(r) + ") " +
+			"then {" + strGlue(map(pos, i2s), ", ") + "} " + 
+			"else {" + strGlue(map(neg, i2s), ", ") + "}";
+	}
+}
+
+vnemoProg2s(p : VNemoProg) -> string {
+	fold(p.decls, "", \acc, decl -> acc + nemoDecl2s(decl) + "\n") + "\n" +
+	foldi(p.body, "", \i, acc, s -> acc + i2s(i) + ": " + vnemoStat2s(s) + "\n") +
+	i2s(maxVmLabel(p.body)) + ":"
+}
+
+main() {
+	file = "test1.nm";
+	src = getFileContent(file);
+	prog = s2nemo(src);
+
+	err_count = ref 0;
+	err = \msg -> {
+		err_count := ^err_count + 1;
+		println(msg)
+	}
+	checkNemoProgram(prog, err);
+
+	if (^err_count == 0) {
+        switch (nemo2vnemo(prog)) {
+            Some(vprog): {
+                file_desc = changeFileExt(file, ".vnm");
+                    
+                vnemo_str = vnemoProg2s(vprog);
+                setFileContent(file_desc, vnemo_str);
+                println(vnemo_str);
+            }
+            None(): { }
+        }
+	}
+}

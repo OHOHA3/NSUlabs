@@ -1,0 +1,138 @@
+import lingo/pegcode/driver;
+import string;
+import ds/tree;
+import math/math;
+
+ArExpr ::= ArSum, ArSub, ArMult, ArDiv, ArNeg, ArInt, ArVar;
+    ArSum(lhs : ArExpr, rhs : ArExpr);
+    ArSub(lhs : ArExpr, rhs : ArExpr);
+    ArMult(lhs : ArExpr, rhs : ArExpr);
+    ArDiv(lhs : ArExpr, rhs : ArExpr);
+    ArNeg(rhs: ArExpr);
+    ArInt(val: int);
+    ArVar(var: string);
+    ArRat(num: int, den: int);
+
+s2ar(str: string) -> ArExpr{
+    e_gr = "#include lingo/arith.lingo";
+    parsic (
+        compilePegGrammar(e_gr),
+        str,
+        defaultPegActions
+    )
+}
+
+ar2s(e: ArExpr) -> string{
+    switch (e) {
+        ArSum(lhs, rhs): "(" + ar2s(lhs) + "+" + ar2s(rhs) + ")";
+        ArSub(lhs, rhs): "(" + ar2s(lhs) + "-" + ar2s(rhs) + ")";
+        ArMult(lhs, rhs): "(" + ar2s(lhs) + "*" + ar2s(rhs) + ")";
+        ArDiv(lhs, rhs): "(" + ar2s(lhs) + "/" + ar2s(rhs) + ")";
+	    ArNeg(rhs): "-" + ar2s(rhs);
+        ArInt(val): i2s(val);
+	    ArVar(var): var;
+    }
+}
+
+ar2i(e: ArExpr, vars: Tree<string, ArRat>) -> ArRat {
+    switch (e) {
+        ArSum(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            sumRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArSub(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            c = ArRat(-b.num,b.den);
+	            sumRat(a, c);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+        ArMult(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            mulRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArDiv(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+		        mulRat(a, ArRat(b.den,b.num));
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArNeg(rhs):{
+	        a = ar2i(rhs,vars);
+	        if (a.den != 0){
+	            ArRat(-a.num, a.den);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+        ArInt(val):{
+	        ArRat(val,1);
+	    }
+	    ArVar(var):{
+	        number = lookupTree(vars, var);
+	        either(number, ArRat(0, 0))
+	    }
+    }
+}
+
+sumRat(r1: ArRat, r2: ArRat)->ArRat{
+    lcmDen = iabs(lcm(r1.den, r2.den));
+    num1 = r1.num * (lcmDen / r1.den);
+    num2 = r2.num * (lcmDen / r2.den);
+    num = num1 + num2; 
+    if(num == 0){
+        ArRat(0, 1);
+    }
+    else{
+        gcdDecimal = iabs(gcd(num, lcmDen));
+        ArRat(num/gcdDecimal, lcmDen/gcdDecimal);
+    }
+}
+
+mulRat(r1: ArRat, r2: ArRat)->ArRat{
+    cross1gcd = iabs(gcd(r1.num,r2.den));
+    cross2gcd = iabs(gcd(r2.num,r1.den));
+    num1 = r1.num / cross1gcd;
+    num2 = r2.num / cross2gcd;
+    den1 = r1.den / cross2gcd;
+    den2 = r2.den / cross1gcd;
+    newNum = num1 * num2;
+    newDen = den1 * den2;
+    gcdDecimal = iabs(gcd(newNum, newDen));
+    ArRat(newNum/gcdDecimal, newDen/gcdDecimal);  
+}
+
+arRat2s(r : ArRat)->string{
+    if (r.den != 0){
+        i2s(r.num) + "/" + i2s(r.den);
+    } else{
+        "Error numbers";
+    }
+}
+
+main(){
+    example1 = "(  (   (  ((  -   2  )   +3) * 8)-34)/23)";
+    println(ar2s(s2ar(example1)));
+    example2 = "((1/a) + (1/b))";
+    println(ar2s(s2ar(example2)));
+
+    var = setTreeValues(makeTree(), [Pair("a", ArRat(1000000000, 1)), Pair("b", ArRat(1000000000, 1))]);
+    println(arRat2s(ar2i(s2ar(example2), var)));
+}
+

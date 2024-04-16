@@ -1,0 +1,31 @@
+prog = ws decl*:d stat:b { NemoProg(:d, :b)};
+decl = "VAR" ws id:v ":" ws type:t ";" ws { NemoDecl(:v, :t) };
+
+type  = int | array;
+int   = "INT" ws { NemoIntType() };
+array = "[" ws type:t "]" ws { NemoArrType(:t) };
+
+stat   = test | seq | choice | loop | assign ;
+test   = "(" ws expr:e1 cond$s ws expr:e2 ")" ws "?" ws { NemoTest($s, :e1, :e2) };
+seq    = ws "{" ws stat:s1 ";" ws stat:s2 seqs*:ss "}" ws { createSeq(:s1, :s2, :ss) };
+seqs   = ";" ws stat;
+choice = ws "{" ws stat:s1 "U" ws stat:s2 chs*:ss "}" ws { createChoice(:s1, :s2, :ss) };
+chs    = ws "U" ws stat;
+loop   = "{" stat:b ws "}" ws "*" ws { NemoLoop(:b) };
+assign = id:v ":=" ws expr:e ws { NemoAssign(:v, :e) };
+
+expr   = const | binOp | unOp | update | apply | var;
+const  = digit+ $s ws { NemoInt(s2i($s)) };
+binOp  = "(" ws expr:l ("+"|"*"|"/"|"-"|"%") $s ws expr:r ")" ws { NemoBinOp($s, :l, :r) };
+unOp   = "-" $s ws expr:e { NemoUnOp($s, :e) };
+apply  = "APP" ws "(" ws expr:a "," ws expr:i ")" ws { NemoApp(:a, :i) };
+update = "UPD" ws "(" ws expr:a "," ws expr:i "," ws expr:v ")" ws { NemoUpd(:a, :i, :v) };
+arrval = "," ws expr;
+
+var    = id:v { NemoVar(:v) };
+cond   = "!=" | "==" | "<=" | ">=" | "<" | ">" ;
+
+id = letter+ $s ws { $s };
+letter = 'a'-'z';
+digit  = '0'-'9';
+ws = (' ' | '\t' | '\n' | '\r')*;

@@ -1,0 +1,588 @@
+import lingo/pegcode/driver;
+import string;
+import ds/tree;
+import math/math;
+
+ArExpr ::= ArSum, ArSub, ArMult, ArDiv, ArNeg, ArVar, ArRat;
+    ArSum(lhs : ArExpr, rhs : ArExpr);
+    ArSub(lhs : ArExpr, rhs : ArExpr);
+    ArMult(lhs : ArExpr, rhs : ArExpr);
+    ArDiv(lhs : ArExpr, rhs : ArExpr);
+    ArNeg(rhs: ArExpr);
+    ArVar(var: string);
+    ArRat(num: int, den: int);
+
+PolyMult(mult:Tree<string, int>);
+PolySum(sum:Tree<PolyMult, int>);
+RatFunc(num: PolySum, den:PolySum);
+
+s2ar(str: string) -> ArExpr{
+    e_gr = "#include lingo/arith.lingo";
+    parsic (
+        compilePegGrammar(e_gr),
+        str,
+        defaultPegActions
+    )
+}
+
+ar2s(e: ArExpr) -> string{
+    switch (e) {
+        ArSum(lhs, rhs): "(" + ar2s(lhs) + "+" + ar2s(rhs) + ")";
+        ArSub(lhs, rhs): "(" + ar2s(lhs) + "-" + ar2s(rhs) + ")";
+        ArMult(lhs, rhs): "(" + ar2s(lhs) + "*" + ar2s(rhs) + ")";
+        ArDiv(lhs, rhs): "(" + ar2s(lhs) + "/" + ar2s(rhs) + ")";
+	    ArNeg(rhs): "-" + ar2s(rhs);
+	    ArVar(var): var;
+        ArRat(num,den):{
+            if (num == 0){
+                i2s(0);
+            } else
+            if (den == 1){
+                i2s(num);
+            } else{
+                i2s(num) + "/" + i2s(den);
+            }
+        };
+    }
+}
+
+ar2i(e: ArExpr, vars: Tree<string, ArRat>) -> ArRat {
+    switch (e) {
+        ArSum(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            sumRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArSub(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            c = ArRat(-b.num,b.den);
+	            sumRat(a, c);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+        ArMult(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            mulRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArDiv(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	    	    mulRat(a, ArRat(b.den,b.num));
+	        } else{
+	    	    ArRat(0,0);
+	        }
+	    }
+	    ArNeg(rhs):{
+	        a = ar2i(rhs,vars);
+	        if (a.den != 0){
+	            ArRat(-a.num, a.den);
+	        } else{
+	    	    ArRat(0,0);
+	        }
+	    }
+	    ArVar(var):{
+	        number = lookupTree(vars, var);
+	        either(number, ArRat(0, 0))
+	    }
+        ArRat(num,den): ArRat(num,den);
+    }
+}
+
+sumRat(r1: ArRat, r2: ArRat)->ArRat{
+    lcmDen = iabs(lcm(r1.den, r2.den));
+    num1 = r1.num * (lcmDen / r1.den);
+    num2 = r2.num * (lcmDen / r2.den);
+    num = num1 + num2; 
+    if(num == 0){
+        ArRat(0, 1);
+    }
+    else{
+        gcdDecimal = iabs(gcd(num, lcmDen));
+        ArRat(num/gcdDecimal, lcmDen/gcdDecimal);
+    }
+}
+
+mulRat(r1: ArRat, r2: ArRat)->ArRat{
+    cross1gcd = iabs(gcd(r1.num,r2.den));
+    cross2gcd = iabs(gcd(r2.num,r1.den));
+    num1 = r1.num / cross1gcd;
+    num2 = r2.num / cross2gcd;
+    den1 = r1.den / cross2gcd;
+    den2 = r2.den / cross1gcd;
+    newNum = num1 * num2;
+    newDen = den1 * den2;
+    gcdDecimal = iabs(gcd(newNum, newDen));
+    ArRat(newNum/gcdDecimal, newDen/gcdDecimal);  
+}
+
+arRat2s(r : ArRat)->string{
+    if (r.den != 0){
+        i2s(r.num) + "/" + i2s(r.den);
+    } else{
+        "Error numbers";
+    }
+}
+
+ar2difAr(e: ArExpr, var: string) -> ArExpr {
+     switch (e) {
+        ArSum(lhs, rhs): ArSum(ar2difAr(lhs,var), ar2difAr(rhs,var));
+	    ArSub(lhs, rhs): ArSub(ar2difAr(lhs,var), ar2difAr(rhs,var));
+        ArMult(lhs, rhs): ArSum(ArMult(ar2difAr(lhs,var),rhs), ArMult(lhs,ar2difAr(rhs,var)));
+	    ArDiv(lhs, rhs): ArDiv(ArSub(ArMult(ar2difAr(lhs,var),rhs), ArMult(lhs,ar2difAr(rhs,var))),ArMult(rhs,rhs));
+	    ArNeg(rhs): ArNeg(ar2difAr(rhs,var));
+	    ArVar(vr): if(vr == var) ArRat(1, 1) else ArRat(0,1);
+        ArRat(num,den): ArRat(0,1);
+    }
+}
+
+reduceAr(e: ArExpr) -> ArExpr {
+    switch (e) {
+        ArSum(lhs, rhs):{
+            l = reduceAr(lhs);
+            r = reduceAr(rhs);
+            if (l == ArRat(0,1)){
+                r;
+            } else
+            if (r == ArRat(0,1)){
+                l;
+            } else
+            if (l.structname == "ArRat" && r.structname == "ArRat"){
+                sumRat(getRat(l), getRat(r));
+            } else{
+                ArSum(l,r);
+            }
+        }
+	    ArSub(lhs, rhs):{
+            l = reduceAr(lhs);
+            r = reduceAr(rhs);
+            if (l == r){
+                ArRat(0,1);
+            } else
+            if (l == ArRat(0,1)){
+                ArNeg(r);
+            } else
+            if (r == ArRat(0,1)){
+                l;
+            } else
+            if (l.structname == "ArRat" && r.structname == "ArRat"){
+                sumRat(getRat(l), ArRat(0 - getRat(r).num,getRat(r).den));
+            } else{
+                ArSub(l,r);
+            }
+        }
+        ArMult(lhs, rhs):{
+            l = reduceAr(lhs);
+            r = reduceAr(rhs);
+            if (l == ArRat(0,1) || r == ArRat(0,1)){
+                ArRat(0,1)
+            } else
+            if (l == ArRat(1,1)){
+                r;
+            } else
+            if (r == ArRat(1,1)){
+                l;
+            } else
+            if (l == ArRat(-1,1)){
+                ArNeg(r);
+            } else
+            if (r == ArRat(-1,1)){
+                ArNeg(l);
+            } else{
+                if (l.structname == "ArRat" && r.structname == "ArRat"){
+                    mulRat(getRat(l), getRat(r));
+                } else{
+                    ArMult(l,r);
+                }
+            }
+        }
+	    ArDiv(lhs, rhs):{
+            l = reduceAr(lhs);
+            r = reduceAr(rhs);
+            if (l == ArRat(0,1)){
+                ArRat(0,1);
+            } else
+            if (r == ArRat(1,1)){
+                l;
+            } else
+            if (r == ArRat(-1,1)){
+                ArNeg(l);
+            } else
+            if (r == ArRat(0,1)){
+                ArRat(0,0);
+            } else{
+                if (l.structname == "ArRat" && r.structname == "ArRat"){
+                    mulRat(getRat(l), ArRat(getRat(l).den,getRat(r).num));
+                } else{
+                    ArDiv(l,r);
+                }
+            }
+        }
+	    ArNeg(rhs):{
+            r = reduceAr(rhs);
+            switch(r){
+                ArNeg(var): var;
+                ArRat(num,den): ArRat(0 - num, den);
+                default: ArNeg(r);
+            }
+        }
+	    ArVar(vr): ArVar(vr);
+        ArRat(num,den): ArRat(num,den);
+    }
+}
+
+getRat(e: ArExpr)->ArRat{
+    switch(e){
+        ArRat(num,den): ArRat(num,den);
+        default: ArRat(0,0);
+    }
+}
+
+ar2RatFunc(e: ArExpr) -> RatFunc{
+    switch(e){
+        ArSum(lhs,rhs): sumRatFunc(ar2RatFunc(lhs), ar2RatFunc(rhs));
+        ArSub(lhs,rhs): sumRatFunc(ar2RatFunc(lhs), negRatFunc(ar2RatFunc(rhs)));
+        ArMult(lhs,rhs): multRatFunc(ar2RatFunc(lhs), ar2RatFunc(rhs));
+        ArDiv(lhs,rhs): divRatFunc(ar2RatFunc(lhs), ar2RatFunc(rhs));
+        ArNeg(rhs): negRatFunc(ar2RatFunc(rhs));
+        ArVar(var): RatFunc(PolySum(makeTree1(PolyMult(makeTree1(var, 1)), 1)), PolySum(makeTree1(PolyMult(TreeEmpty()), 1)));
+        ArRat(num,den): RatFunc(PolySum(makeTree1(PolyMult(TreeEmpty()), num)), PolySum(makeTree1(PolyMult(TreeEmpty()), den)));
+    }
+}
+
+sumPolySum(ps1:PolySum, ps2:PolySum)->PolySum{
+    PolySum(
+        filterTree(
+            mergeTreeCustom(ps1.sum, ps2.sum, \k, v1, v2 ->{
+                v1 + v2;
+            }),
+            \k,v -> {!(v == 0)}
+        )
+    )
+}
+
+multPolySum(ps1:PolySum, ps2:PolySum)->PolySum{
+    PolySum(
+        filterTree(
+            foldTree(ps1.sum, TreeEmpty(), \k1, v1, r1 -> {
+                mergeTreeCustom(r1,
+                    foldTree(ps2.sum, TreeEmpty(), \k2, v2, r2 ->
+                    {
+                        mul = PolyMult(mergeTreeCustom(k1.mult, k2.mult, \kk, vv1, vv2 -> {vv1 + vv2}));
+                        mergeTreeCustom(r2, makeTree1(mul, v1 * v2), \kk, vv1, vv2 -> {vv1 + vv2});
+                    }),
+                    \kk, vv1, vv2 -> {vv1 + vv2}
+                )
+            })
+            , \k,v -> {!(v == 0)}
+        )
+    )
+}
+
+negPolySum(ps: PolySum)->PolySum{
+    PolySum(
+        foldTree(ps.sum, TreeEmpty(), \k, v, r ->{
+            mergeTree(r, makeTree1(k, 0 - v));
+        })
+    )
+}
+
+sumRatFunc(f1:RatFunc, f2:RatFunc)->RatFunc{
+    num1 = multPolySum(f1.num, f2.den);
+    num2 = multPolySum(f2.num, f1.den);
+    den = multPolySum(f1.den, f2.den);
+    RatFunc(sumPolySum(num1, num2), den);
+}
+
+negRatFunc(f:RatFunc)->RatFunc{
+    RatFunc(negPolySum(f.num), f.den);
+}
+
+multRatFunc(f1:RatFunc, f2:RatFunc)->RatFunc{
+    RatFunc(multPolySum(f1.num, f2.num), multPolySum(f1.den, f2.den));
+}
+
+divRatFunc(f1: RatFunc, f2:RatFunc)->RatFunc{
+    multRatFunc(f1, RatFunc(f2.den, f2.num));
+}
+
+ratFunc2s(f: RatFunc)->string{
+    if(polySum2s(f.den) == "1"){
+        polySum2s(f.num);
+    }
+    else{
+        "(" + polySum2s(f.num) + ") " + "/"
+        + " (" + polySum2s(f.den) + ")";
+    }
+}
+
+polySum2s(ps:PolySum)->string{
+    pairs = tree2pairs(ps.sum);
+    if(length(pairs) == 0){
+        "0";
+    }
+    else{
+        foldi(pairs, "", \i, r, v -> {
+        psStr = r + partSum2s(polyMult2s(v.first), v.second);
+        if(i == length(pairs) - 1){
+            psStr;
+        }
+        else{
+            psStr + " + ";
+        }
+        });
+    }
+}
+
+partSum2s(value : string, coef : int)->string{
+    if((coef != 1) && (value != "1")){
+        concatStrings([i2s(coef), "*", value]);
+    }
+    else if((coef != 1) && (value == "1")){
+        concatStrings([i2s(coef)]);
+    }
+    else if((coef == 1) && (value != "1")){
+        concatStrings([value]);
+    }
+    else{
+        concatStrings([i2s(coef)]);
+    }
+}
+
+polyMult2s(pm: PolyMult)->string{
+    pairs = tree2pairs(pm.mult);
+    if(length(pairs) == 0){
+        "1";
+    }
+    else{
+        foldi(pairs, "", \i, r, v -> {
+            pmStr = r + partMul2s(v.first, v.second);
+            if(i == length(pairs) - 1){
+                pmStr;
+            }
+            else{
+                pmStr + "*";
+            }
+        })
+    }
+}
+
+partMul2s(var:string, deg: int)->string{
+    if(deg != 1){
+        var + "^" + i2s(deg);
+    }
+    else{
+        var;
+    }
+}
+
+reduceRatFunc(f: RatFunc) -> RatFunc{
+    if(ratFunc2s(f) == "0"){
+        f;
+    }
+    else{
+	    numMulti = findGreatestMultiplier(f.num);
+	    denMulti = findGreatestMultiplier(f.den);
+	    numRest = divPolySum(f.num, numMulti);
+	    denRest = divPolySum(f.den, denMulti);
+	    gcdPS = gcdPolySum(numMulti, denMulti);
+   	    dividedNumRest = divPolySum(numMulti, gcdPS);
+	    dividedDenRest = divPolySum(denMulti, gcdPS);
+	    if(numRest == denRest){
+		    RatFunc(dividedNumRest, dividedDenRest);
+	    } else
+        if(numRest == negPolySum(denRest)){
+		    negRatFunc(RatFunc(dividedNumRest, dividedDenRest));
+	    } else{
+		    multRatFunc(RatFunc(numRest, denRest), RatFunc(dividedNumRest,dividedDenRest))
+	    }
+    }
+}
+
+findGreatestMultiplier(ps: PolySum)->PolySum 
+{
+	PolySum(makeTree1(findGreatestMultiplierMult(ps), findGreatestMultiplierNum(ps)));
+}
+
+findGreatestMultiplierMult(ps: PolySum) -> PolyMult 
+{
+	if (ps.sum == TreeEmpty()){
+        PolyMult(TreeEmpty());
+    } else{
+		firstPoly = (tree2pairs(ps.sum))[0];
+		polyMultTree = foldTree(firstPoly.first.mult, firstPoly.first.mult, \k, v, r -> {
+			foldTree(ps.sum, r, \k1, v1, r1 -> {
+				v2 = lookupTreeDef(k1.mult, k, 0);
+				mergeTreeCustom(r1, makeTree1(k, if (v2 > v) v else v2), \k2, vv1, vv2 -> {
+					if (vv1 > vv2){
+                        vv2;
+                    } else{
+                        vv1;
+                    }
+				})
+			})
+		})
+		PolyMult(filterTree(polyMultTree, \k, v -> { !(v == 0)}));
+	}
+}
+
+findGreatestMultiplierNum(p: PolySum) -> int{
+	if (p.sum == TreeEmpty()){
+        1;
+    } else {
+		foldTree(p.sum, 0, \k, v, r -> {
+			if(r == 0){
+                iabs(v)
+            } else{
+                gcd(r, iabs(v))
+            }
+		})
+	}
+}
+
+gcdPolySum(ps1: PolySum, ps2: PolySum) -> PolySum{
+	if(ps1.sum == TreeEmpty() || ps2.sum == TreeEmpty()){
+        PolySum(makeTree1(PolyMult(TreeEmpty()), 1));
+    } else{
+		firstPoly = (tree2pairs(ps1.sum))[0];
+		scndPoly = (tree2pairs(ps2.sum))[0];
+		gcdNum = gcd(firstPoly.second, scndPoly.second);
+		resultMult = foldTree(firstPoly.first.mult, firstPoly.first.mult, \k, v, r -> {
+			v2 = lookupTreeDef(scndPoly.first.mult, k, 0);
+			mergeTreeCustom(r, makeTree1(k, if(v2 > v) v else v2), \kk, vv1, vv2 -> {
+				if(vv1 > vv2){
+                    vv2;
+                } else{
+                    vv1;
+                }
+			})
+		})
+		PolySum(makeTree1(PolyMult(filterTree(resultMult, \k, v -> {!(v == 0)})), gcdNum));
+	}
+}
+
+divPolySum(pnum: PolySum, pden: PolySum) -> PolySum{
+    if(polySum2s(pden) == "1"){
+        pnum;
+    } else{
+        poly = (tree2pairs(pden.sum))[0];
+	    denNum = poly.second;
+	    denMult = poly.first.mult;
+	    PolySum(foldTree(pnum.sum, TreeEmpty(), \k, v, r -> {
+			    mergeTree(r,
+				    makeTree1(PolyMult(filterTree(
+						mergeTreeCustom(k.mult, denMult, \kk, vv1, vv2 -> {
+							vv2 - vv1;
+						    })
+						    , \k1, v1 -> {!(v1 == 0)})
+					    ),
+					    v/denNum
+				    )
+			    )
+		    })
+	    )
+    }
+}
+
+similarTerms2s(rf:RatFunc)->string{
+    if(polySum2s(rf.den) == "1"){
+        similar2s(findSimilarTerms(rf.num));
+    }
+    else{
+        "(" + similar2s(findSimilarTerms(rf.num)) + ") " + "/" 
+        + " (" + similar2s(findSimilarTerms(rf.den)) + ")";
+    }
+}
+
+findSimilarTerms(ps:PolySum) -> Tree<string, int>{
+    plusVal = filterTree(ps.sum, \key, value ->{
+        if(value > 0){
+            true;
+        }else{
+            false;
+        }
+    });
+    treePlus = foldTree(plusVal, TreeEmpty(), \k, v, r ->{
+        mergeTreeCustom(r,
+            makeTree1(polyMult2s(k), v),
+            \kk, vv1,vv2 -> {
+                vv1 + vv2;
+            }
+        )
+    });
+    minusVal = filterTree(ps.sum, \key, value ->{
+        if(value < 0){
+            true;
+        }else{
+            false;
+        }
+    });
+    treeMinus = foldTree(minusVal, TreeEmpty(), \k ,v, r ->{
+        mergeTreeCustom(r,
+            makeTree1(polyMult2s(k), v),
+            \kk,vv1,vv2 -> {
+                vv1 + vv2;
+            }
+        )
+    });
+    filterTree(mergeTreeCustom(treePlus, treeMinus, \k, v1, v2 ->{
+        v1 + v2;
+    }), \key, value -> {value != 0});
+}
+
+similar2s(simParts: Tree<string, int>)->string{
+    pairs = tree2pairs(simParts);
+    if(length(pairs) == 0){
+        "0";
+    }
+    else{
+        foldi(pairs, "", \i, r, v -> {
+        polySumStr = r + part2s(v.first, v.second);
+        if(i == length(pairs) - 1){
+            polySumStr;
+        }
+        else{
+            polySumStr + " + ";
+        }
+        });
+    }
+}
+
+part2s(value: string, coef: int)->string{
+    if((coef != 1) && (coef != -1) && (value != "1")){
+        concatStrings([i2s(coef), "*", value]);
+    }
+    else if((coef != 1) && (coef != -1) && (value == "1")){
+        concatStrings([i2s(coef)]);
+    }
+    else if((coef == 1) && (value != "1")){
+        concatStrings([value]);
+    }
+    else if((coef == -1) && (value != "1")){
+        concatStrings(["-", value]);
+    }
+    else{
+        concatStrings([i2s(coef)]);
+    }
+}
+
+main(){
+    example = "(((x+y)*(y-10))/((x*2)*(y-2)))";
+    println(ar2s(s2ar(example)));
+    ratFunc = ar2RatFunc(reduceAr(s2ar(example)));
+    println(ratFunc2s(reduceRatFunc(ratFunc)));
+    println(similarTerms2s(reduceRatFunc(ratFunc)));
+}
+

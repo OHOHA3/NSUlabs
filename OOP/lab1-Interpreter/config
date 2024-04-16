@@ -1,0 +1,8 @@
++ -> Work.Operators.OperatorPlus
+- -> Work.Operators.OperatorMinus
+> -> Work.Operators.OperatorRight
+< -> Work.Operators.OperatorLeft
+. -> Work.Operators.OperatorWrite
+, -> Work.Operators.OperatorRead
+[ -> Work.Operators.OperatorOpenBracket
+] -> Work.Operators.OperatorCloseBracket

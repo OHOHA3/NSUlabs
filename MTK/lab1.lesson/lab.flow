@@ -1,0 +1,51 @@
+import string;
+
+arr2s(arr:[int])->string{
+	strGlue(map(arr,i2s),",");
+}
+
+sumarr(arr:[int])->int{
+	fold(arr,0,\x,y->x+y);
+}
+
+fib1(n:int) -> [int]{
+	if (n==0) []
+	else if (n==1) [1]
+	else if (n==2) [1,1]
+	else{
+	x = fib1(n-1);
+	concat(x,[x[n-2]+x[n-3]]);
+	}
+}
+
+fib2(arr:[int],n:int) -> [int]{
+	if (length(arr) == n) arr
+	else if (length(arr)<2){
+	a = concat(arr,[1]);
+	fib2(a,n);
+	} else{
+	a = concat(arr,[arr[length(arr)-1]+arr[length(arr)-2]]);
+	fib2(a,n);
+	}
+}
+
+fib3(n: int, acc: ref[int]) -> [int]{
+	if (n<=2) ^acc
+	else fib3(n-1, {refArrayPush(acc,^acc[length(^acc)-1]+^acc[length(^acc)-2]);acc})
+}
+
+
+main(){
+	arr:[int]=[1,2,3];
+	a: ref[int] = ref [1,1];
+	println(arr2s(arr));
+	println(sumarr(arr));
+	println(arr2s(fib1(10)));
+	println(arr2s(fib2([],10)));
+	println(arr2s(fib3(10, a)));
+}
+
+/*r:ref double = ref 1.0;
+r:=2.0;
+x = ^r;
+refArrayPush(ref[?],?) -> void*/

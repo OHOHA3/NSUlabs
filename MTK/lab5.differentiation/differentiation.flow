@@ -1,0 +1,256 @@
+import lingo/pegcode/driver;
+import string;
+import ds/tree;
+import math/math;
+
+ArExpr ::= ArSum, ArSub, ArMult, ArDiv, ArNeg, ArVar, ArRat;
+    ArSum(lhs : ArExpr, rhs : ArExpr);
+    ArSub(lhs : ArExpr, rhs : ArExpr);
+    ArMult(lhs : ArExpr, rhs : ArExpr);
+    ArDiv(lhs : ArExpr, rhs : ArExpr);
+    ArNeg(rhs: ArExpr);
+    ArVar(var: string);
+    ArRat(num: int, den: int);
+
+s2ar(str: string) -> ArExpr{
+    e_gr = "#include lingo/arith.lingo";
+    parsic (
+        compilePegGrammar(e_gr),
+        str,
+        defaultPegActions
+    )
+}
+
+ar2s(e: ArExpr) -> string{
+    switch (e) {
+        ArSum(lhs, rhs): "(" + ar2s(lhs) + "+" + ar2s(rhs) + ")";
+        ArSub(lhs, rhs): "(" + ar2s(lhs) + "-" + ar2s(rhs) + ")";
+        ArMult(lhs, rhs): "(" + ar2s(lhs) + "*" + ar2s(rhs) + ")";
+        ArDiv(lhs, rhs): "(" + ar2s(lhs) + "/" + ar2s(rhs) + ")";
+	    ArNeg(rhs): "-" + ar2s(rhs);
+	    ArVar(var): var;
+        ArRat(num,den):{
+            if (num == 0){
+                i2s(0);
+            } else
+            if (den == 1){
+                i2s(num);
+            } else{
+                i2s(num) + "/" + i2s(den);
+            }
+        }
+    }
+}
+
+ar2i(e: ArExpr, vars: Tree<string, ArRat>) -> ArRat {
+    switch (e) {
+        ArSum(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            sumRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArSub(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            c = ArRat(-b.num,b.den);
+	            sumRat(a, c);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+        ArMult(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	            mulRat(a, b);
+	        } else{
+		        ArRat(0,0);
+	        }
+	    }
+	    ArDiv(lhs, rhs):{
+	        a = ar2i(lhs,vars);
+	        b = ar2i(rhs,vars);
+	        if (a.den != 0 && b.den != 0){
+	    	    mulRat(a, ArRat(b.den,b.num));
+	        } else{
+	    	    ArRat(0,0);
+	        }
+	    }
+	    ArNeg(rhs):{
+	        a = ar2i(rhs,vars);
+	        if (a.den != 0){
+	            ArRat(-a.num, a.den);
+	        } else{
+	    	    ArRat(0,0);
+	        }
+	    }
+	    ArVar(var):{
+	        number = lookupTree(vars, var);
+	        either(number, ArRat(0, 0))
+	    }
+        ArRat(num,den): ArRat(num,den);
+    }
+}
+
+sumRat(r1: ArRat, r2: ArRat)->ArRat{
+    lcmDen = iabs(lcm(r1.den, r2.den));
+    num1 = r1.num * (lcmDen / r1.den);
+    num2 = r2.num * (lcmDen / r2.den);
+    num = num1 + num2; 
+    if(num == 0){
+        ArRat(0, 1);
+    }
+    else{
+        gcdDecimal = iabs(gcd(num, lcmDen));
+        ArRat(num/gcdDecimal, lcmDen/gcdDecimal);
+    }
+}
+
+mulRat(r1: ArRat, r2: ArRat)->ArRat{
+    cross1gcd = iabs(gcd(r1.num,r2.den));
+    cross2gcd = iabs(gcd(r2.num,r1.den));
+    num1 = r1.num / cross1gcd;
+    num2 = r2.num / cross2gcd;
+    den1 = r1.den / cross2gcd;
+    den2 = r2.den / cross1gcd;
+    newNum = num1 * num2;
+    newDen = den1 * den2;
+    gcdDecimal = iabs(gcd(newNum, newDen));
+    ArRat(newNum/gcdDecimal, newDen/gcdDecimal);  
+}
+
+arRat2s(r : ArRat)->string{
+    if (r.den != 0){
+        i2s(r.num) + "/" + i2s(r.den);
+    } else{
+        "Error numbers";
+    }
+}
+
+ar2difAr(e: ArExpr, var: string) -> ArExpr {
+     switch (e) {
+        ArSum(lhs, rhs): ArSum(ar2difAr(lhs,var), ar2difAr(rhs,var));
+	    ArSub(lhs, rhs): ArSub(ar2difAr(lhs,var), ar2difAr(rhs,var));
+        ArMult(lhs, rhs): ArSum(ArMult(ar2difAr(lhs,var),rhs), ArMult(lhs,ar2difAr(rhs,var)));
+	    ArDiv(lhs, rhs): ArDiv(ArSub(ArMult(ar2difAr(lhs,var),rhs), ArMult(lhs,ar2difAr(rhs,var))),ArMult(rhs,rhs));
+	    ArNeg(rhs): ArNeg(ar2difAr(rhs,var));
+	    ArVar(vr): if(vr == var) ArRat(1, 1) else ArRat(0,1);
+        ArRat(num,den): ArRat(0,1);
+    }
+}
+
+reduceDifAr(e: ArExpr) -> ArExpr {
+    switch (e) {
+        ArSum(lhs, rhs):{
+            l = reduceDifAr(lhs);
+            r = reduceDifAr(rhs);
+            if (l == ArRat(0,1)){
+                r;
+            } else
+            if (r == ArRat(0,1)){
+                l;
+            } else
+            if (l.structname == "ArRat" && r.structname == "ArRat"){
+                sumRat(getRat(l), getRat(r));
+            } else{
+                ArSum(l,r);
+            }
+        }
+	    ArSub(lhs, rhs):{
+            l = reduceDifAr(lhs);
+            r = reduceDifAr(rhs);
+            if (l == r){
+                ArRat(0,1);
+            } else
+            if (l == ArRat(0,1)){
+                ArNeg(r);
+            } else
+            if (r == ArRat(0,1)){
+                l;
+            } else
+            if (l.structname == "ArRat" && r.structname == "ArRat"){
+                sumRat(getRat(l), ArRat(0 - getRat(r).num,getRat(r).den));
+            } else{
+                ArSub(l,r);
+            }
+        }
+        ArMult(lhs, rhs):{
+            l = reduceDifAr(lhs);
+            r = reduceDifAr(rhs);
+            if (l == ArRat(0,1) || r == ArRat(0,1)){
+                ArRat(0,1)
+            } else
+            if (l == ArRat(1,1)){
+                r;
+            } else
+            if (r == ArRat(1,1)){
+                l;
+            } else
+            if (l == ArRat(-1,1)){
+                ArNeg(r);
+            } else
+            if (r == ArRat(-1,1)){
+                ArNeg(l);
+            } else{
+                if (l.structname == "ArRat" && r.structname == "ArRat"){
+                    mulRat(getRat(l), getRat(r));
+                } else{
+                    ArMult(l,r);
+                }
+            }
+        }
+	    ArDiv(lhs, rhs):{
+            l = reduceDifAr(lhs);
+            r = reduceDifAr(rhs);
+            if (l == ArRat(0,1)){
+                ArRat(0,1);
+            } else
+            if (r == ArRat(1,1)){
+                l;
+            } else
+            if (r == ArRat(-1,1)){
+                ArNeg(l);
+            } else
+            if (r == ArRat(0,1)){
+                ArRat(0,0);
+            } else{
+                if (l.structname == "ArRat" && r.structname == "ArRat"){
+                    mulRat(getRat(l), ArRat(getRat(l).den,getRat(r).num));
+                } else{
+                    ArDiv(l,r);
+                }
+            }
+        }
+	    ArNeg(rhs):{
+            r = reduceDifAr(rhs);
+            switch(r){
+                ArNeg(var): var;
+                ArRat(num,den): ArRat(0 - num, den);
+                default: ArNeg(r);
+            }
+        }
+	    ArVar(vr): ArVar(vr);
+        ArRat(num,den): ArRat(num,den);
+    }
+}
+
+getRat(e: ArExpr)->ArRat{
+    switch(e){
+        ArRat(num,den): ArRat(num,den);
+        default: ArRat(0,0);
+    }
+}
+
+main(){
+    example = "((1/a) + (1/b))";
+    println(ar2s(s2ar(example)));
+    difAr = ar2difAr(s2ar(example),"a");
+    println(ar2s(difAr));
+    println(ar2s(reduceDifAr(difAr)));
+}
+

@@ -1,0 +1,84 @@
+import lingo/pegcode/driver;
+import string;
+
+ArExpr ::= ArSum, ArMult, ArInt;
+    ArSum(lhs : ArExpr, rhs : ArExpr);
+    ArMult(lhs : ArExpr, rhs : ArExpr);
+    ArInt(val: int);
+
+s2ar(str: string) -> ArExpr{
+    e_gr = "#include lingo/arith.lingo";
+    parsic (
+        compilePegGrammar(e_gr),
+        str,
+        defaultPegActions
+    )
+}
+
+ar2s(e: ArExpr) -> string{
+    switch (e) {
+        ArSum(lhs, rhs): "(" + ar2s(lhs) + "+" + ar2s(rhs) + ")";
+        ArMult(lhs, rhs): "(" + ar2s(lhs) + "*" + ar2s(rhs) + ")";
+        ArInt(val): i2s(val);
+    }
+}
+
+ar2arr(e: ArExpr) -> [string]{
+    switch (e) {
+        ArSum(lhs, rhs):{
+	    a = concat(ar2arr(lhs), ar2arr(rhs));
+	    concat(a,["+"]);
+	}
+        ArMult(lhs, rhs):{
+	    a = concat(ar2arr(lhs), ar2arr(rhs));
+	    concat(a,["*"]);
+	}
+        ArInt(val):{
+	    [i2s(val)];
+	}
+    }
+}
+
+count(rpm : [string]) -> int{
+    res = fold(rpm, ref[],\stack,exp ->{
+        if(exp == "+"){
+            a = pop(stack);
+            b = pop(stack);
+            c = a + b;
+            push(stack,c);
+        } else if (exp == "*"){
+            a = pop(stack);
+            b = pop(stack);
+            c = a * b;
+            push(stack, c) 
+        } else{
+            push(stack,s2i(exp));
+        }
+            stack;
+    });
+    pop(res);
+}
+
+pop(stack : ref [int]) -> int{
+    a = lastElement(^stack, 0);
+    stack := subrange(^stack, 0, length(^stack) - 1); 
+    a;
+}
+
+push(stack : ref[int], element : int){
+    refArrayPush(stack, element);
+}
+
+main(){
+	example1 = "(  (2+3) * 8)";
+	example2 = "((2*3)+   3)";
+	rpn1 = ar2arr(s2ar(example1));
+	rpn2 = ar2arr(s2ar(example2));
+	println(ar2s(s2ar(example1)));
+	println(rpn1);
+	println(i2s(count(rpn1)));
+	println(ar2s(s2ar(example2)));
+	println(rpn2);
+	println(i2s(count(rpn2)));
+}
+

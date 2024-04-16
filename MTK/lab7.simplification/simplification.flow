@@ -1,0 +1,187 @@
+import lingo/pegcode/driver;
+import string;
+import ds/tree;
+import math/math;
+
+ArExpr ::= ArSum, ArSub, ArMult, ArDiv, ArNeg, ArVar, ArRat;
+    ArSum(lhs : ArExpr, rhs : ArExpr);
+    ArSub(lhs : ArExpr, rhs : ArExpr);
+    ArMult(lhs : ArExpr, rhs : ArExpr);
+    ArDiv(lhs : ArExpr, rhs : ArExpr);
+    ArNeg(rhs: ArExpr);
+    ArVar(var: string);
+    ArRat(num: int, den: int);
+
+regulation(before: ArExpr, after: ArExpr);
+
+s2ar(str: string) -> ArExpr{
+    e_gr = "#include lingo/arith.lingo";
+    parsic (
+        compilePegGrammar(e_gr),
+        str,
+        defaultPegActions
+    )
+}
+
+ar2s(e: ArExpr) -> string{
+    switch (e){
+        ArSum(lhs, rhs): "(" + ar2s(lhs) + "+" + ar2s(rhs) + ")";
+        ArSub(lhs, rhs): "(" + ar2s(lhs) + "-" + ar2s(rhs) + ")";
+        ArMult(lhs, rhs): "(" + ar2s(lhs) + "*" + ar2s(rhs) + ")";
+        ArDiv(lhs, rhs): "(" + ar2s(lhs) + "/" + ar2s(rhs) + ")";
+	    ArNeg(rhs): "-" + ar2s(rhs);
+	    ArVar(var): var;
+        ArRat(num,den):{
+            if (num == 0){
+                i2s(0);
+            } else
+            if (den == 1){
+                i2s(num);
+            } else{
+                i2s(num) + "/" + i2s(den);
+            }
+        };
+    }
+}
+
+
+simplifyExpr(e: ArExpr, regulationTree : Tree<ArExpr, ArExpr>) -> ArExpr{
+    res = switch (e){
+        ArSum(lhs,rhs): ArSum(simplifyExpr(lhs, regulationTree), simplifyExpr(rhs, regulationTree));
+        ArSub(lhs,rhs): ArSub(simplifyExpr(lhs, regulationTree), simplifyExpr(rhs, regulationTree));
+        ArMult(lhs,rhs): ArMult(simplifyExpr(lhs, regulationTree), simplifyExpr(rhs, regulationTree));
+        ArDiv(lhs,rhs): ArDiv(simplifyExpr(lhs, regulationTree), simplifyExpr(rhs, regulationTree));
+        ArNeg(rhs): ArNeg(simplifyExpr(rhs, regulationTree));
+        ArRat(num,den): ArRat(num,den);
+        ArVar(var): ArVar(var);
+    }
+    foldTree(regulationTree, res, \reg, value, r -> {
+        expancedRegulationTree = expansionOfRegulation(reg, r, makeTree());
+        switch(expancedRegulationTree){
+            None(): r;
+            Some(val): matchVars(value, val);
+        }
+    });
+}
+
+expansionOfRegulation(regExpr : ArExpr, expr : ArExpr, matches : Tree<ArVar, ArExpr>) -> Maybe<Tree<ArVar, ArExpr>> {
+    switch(regExpr){
+        ArSum(lhs, rhs):{
+            switch(expr){
+                ArSum(lhs1, rhs1):{
+                     matchLL = expansionOfRegulation(lhs, lhs1, matches);
+                     switch(matchLL){
+                        None(): None();
+                        Some(resolver): expansionOfRegulation(rhs, rhs1, resolver);
+                     }                   
+                } 
+                default: None();
+            }
+        }
+        ArSub(lhs, rhs):{
+            switch(expr){
+                ArSub(lhs1, rhs1):{
+                matchLL = expansionOfRegulation(lhs, lhs1, matches);
+                    switch(matchLL){
+                        None(): None();
+                        Some(resolver): expansionOfRegulation(rhs, rhs1, resolver);
+                    }   
+                }
+                default: None();
+            }
+        }
+        ArMult(lhs, rhs):{
+            switch(expr){
+                ArMult(lhs1, rhs1):{
+                    matchLL = expansionOfRegulation(lhs, lhs1, matches);
+                    switch(matchLL){
+                        None(): None();
+                        Some(resolver): expansionOfRegulation(rhs, rhs1, resolver);
+                    }   
+                }
+                default: None();
+            }
+        }
+        ArNeg(arg):{
+            switch(expr){
+                ArNeg(arg1): expansionOfRegulation(arg, arg1, matches);
+                default: None();
+            }
+        }
+        ArDiv(lhs, rhs):{
+            switch(expr){
+                ArDiv(lhs1, rhs1):{
+                    matchLL = expansionOfRegulation(lhs, lhs1, matches);
+                    switch(matchLL){
+                        None(): None();
+                        Some(resolver): expansionOfRegulation(rhs, rhs1, resolver);
+                    }   
+                }
+                default: None();
+            }
+        }
+        ArRat(num,den):{
+            switch(expr){
+                ArRat(num1,den1):{
+                    if (regExpr == expr){
+                        Some(matches);
+                    } else{
+                        None();
+                    }
+                }
+                default: None();
+            }
+        }
+        ArVar(var):{
+            val = lookupTree(matches, regExpr);
+            switch(val){
+                None(): {Some(setTree(matches, regExpr, expr));}
+                Some(cur):{
+                    if (cur == expr) {
+                        Some(matches); 
+                    } else { 
+                        None();
+                    }
+                }
+            }
+        }
+    }
+}
+
+matchVars(expr : ArExpr, varResolve : Tree<ArVar, ArExpr>) -> ArExpr {
+    switch(expr){
+        ArSum(lhs, rhs): ArSum(matchVars(lhs, varResolve), matchVars(rhs, varResolve));
+        ArSub(lhs, rhs): ArSub(matchVars(lhs, varResolve), matchVars(rhs, varResolve));
+        ArDiv(lhs, rhs): ArDiv(matchVars(lhs, varResolve), matchVars(rhs, varResolve));
+        ArMult(lhs, rhs): ArMult(matchVars(lhs, varResolve), matchVars(rhs, varResolve));
+        ArNeg(arg):{
+            var = matchVars(arg, varResolve);
+            switch(var) {
+                ArRat(num,den): ArNeg(var);
+                ArVar(v): ArNeg(var);
+                default: ArNeg(ArRat(1,1));
+            }
+        }
+        ArRat(num, den): expr;
+        ArVar(var):{
+            resolve = lookupTree(varResolve, expr);
+            switch (resolve){
+                None(): expr;
+                Some(res): res;
+            }
+        }
+    }
+}
+
+regulationTree(regulations: [regulation]) -> Tree<ArExpr, ArExpr>{
+    fold(regulations, makeTree(), \r, reg -> {setTree(r, reg.before, reg.after)});
+}
+
+main(){
+    example = "(((x*x)-(y*y))/((a*a)-(b*b)))";
+    regulations = [ 
+        regulation(s2ar("((x*x)-(y*y))"),s2ar("((x+y)*(x-y))"))
+    ];
+    println(ar2s(s2ar(example)));
+    println(ar2s(simplifyExpr(s2ar(example),regulationTree(regulations))));
+}

@@ -1,0 +1,31 @@
+VAR n: INT;
+VAR x: INT;
+VAR y: INT;
+VAR l: [INT];
+VAR v: INT;
+{
+	n := 12;
+	x := 0; 
+	y := 0;
+
+	v := UPD(l, (x+1), (2 * n));
+	
+	v := APP(l, x);
+
+	{{
+		{
+			(y <= n)?;
+			y := (y + (x + (x + 1)));
+			x := (x + 1)
+		} U
+		{
+			x := (x + 1);
+			y := (y + (x + (x + 1)))
+		}
+	}
+	}*;
+
+	(y < n)?;
+
+	x := (x - 1)
+}
